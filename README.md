@@ -18,6 +18,8 @@
 
 此外，针对任一**目录编译批次**可做**台站 P 波拾取缺口评估（station P-wave pick gap assessment）**：提交编译 ID、到时容差（0.1–10 秒）与最低可观测事件数（1–100）；服务只取**提交时已发布**的条目，每条仅经其**主 event/run 计入一次**，沿用该 run 的**速度模型与校准版本**，以“事件发震时刻 + P 波旅行时（含台站高程改正）+ 台站 P 相校准偏移”预测 P 到时；仅当该 run **原始摄取波形完整覆盖**预测时刻前后容差窗口（首末样本）时才计为**可观测**；该摄取批次中同站的**人工 P 拾取或 STA/LTA 候选**落入窗口记**命中**，否则记**缺口**，**人工 S 拾取一律不算**（窗口内的 S 拾取单独列为排除证据）。报告按台站汇总可观测数、缺口数与缺口率，可观测事件数低于阈值的台站标注**证据不足（不评分）**，并返回**逐事件**的预测时刻、覆盖区间、全部命中拾取或不可观测原因；报告冻结所用条目的**修订号**与全部判定证据，按（编译 ID， 容差， 最低可观测事件数）幂等保存，重复请求返回原快照，并发同请求只留一份，逐事件明细支持稳定游标分页，**不改动任何摄取/run/事件/拾取或目录内容**。
 
+最后，针对任一**台站**可做**波形采集连续性核对（waveform acquisition continuity check）**：客户端提交台站码与一个 **UTC 半开时间窗** `[start_time, end_time)`，服务**跨全部摄取批次**读取该站的 Waveform 元数据（与 run、事件、拾取及目录状态无关），把每段按起点与 `npts/采样率` 换算为半开覆盖区间 `[start, start+npts/sr)` 并裁剪到请求窗；同站、**起点、采样率、样本数与数据哈希全同**的重复波形（典型为重复摄取）**只计一次**，但保留全部来源 ingestion ID。随后从左到右扫描全部端点：内部被 **≥1** 个去重后波形覆盖标为**覆盖**、被 **≥2** 个覆盖标为**交叠**，相接的同类区间自动合并；未覆盖部分为首尾及内部**空档**，已知台站整窗无记录返回一个整窗空档。响应返回覆盖段、首尾/内部/整窗空档与交叠段各自的起止与时长，覆盖段与交叠段附来源 ingestion ID；**交叠只表示采集范围重合，不推断样本内容冲突**。非法或空时间窗（`start_time ≥ end_time`、缺失或不可解析的边界）明确拒绝（422），**从未摄取过的台站返回 404**。核对为纯只读派生计算、不写任何状态，结果不受 run 与目录状态影响，原摄取及拾取缺口报告均不变。
+
 
 ## 功能特性
 
@@ -34,6 +36,7 @@
 - **P 波初动震源机制反演**：针对已完成事件的关联 P 拾取提交正负极性与权重；用事件震源位置、台站坐标与该 run 的分层速度模型求射线方位角/出射角，10° 网格搜索双力偶（走向/倾角/滑动角），按完整候选集计算加权极性误判，最少者入选（零幅值按误判计）；去重仅合并互换节面的同一矩张量，**整体反号机制（滑动反向）保留为独立候选**；每组解返回两个节面、误判权重与逐台站观测/预测；同分最优解稳定排序 + 游标分页；非关联拾取、同站矛盾极性、< 6 独立台站、最大方位空档 ≥ 180° 明确拒绝；按（事件， 模型版本， 规范化极性集）幂等，并发同请求折叠为一份，只写独立反演表；旧版 M==-M 误去重的已存报告在重复提交或按 ID 查询时幂等、并发安全地惰性修正，原 ID/请求哈希/冻结快照不变
 - **事件定位不确定性评估**：冻结已完成事件的关联 P/S 拾取（含权重）、速度模型、校准版本与处理参数；按客户端种子有放回重采样与原台站数相同的台站（保留全部关联拾取，重复台站按出现次数计权），用同一加权最小二乘定位器重算 N 次（200–2000）；逐样本记录可解状态与结构化失败原因（`insufficient_stations`/`location_failed`/`not_converged`）；按最近秩两侧 `(1−α)/2` 分位点输出发震时刻/纬度/经度/深度的 α（0.8–0.99）置信区间，仅用可解样本计算样本协方差（ddof=1）与可解率；可解样本不足 80% 明确拒绝且不留状态；按（事件， 参数， 种子）幂等，并发折叠为一份，报告与样本只读 + 稳定游标分页，不改动原事件、run 与目录
 - **台站 P 波拾取缺口评估**：按目录编译 ID + 到时容差（0.1–10 s）+ 最低可观测事件数（1–100）评估；仅取提交时已发布条目，每条经其主 event/run 只计一次；P 到时 = 发震时刻 + 该 run 分层模型 P 旅行时（深度含台站高程改正）+ 该 run 校准版本的台站 P 偏移；波形首末样本完整覆盖预测时刻 ± 容差才可观测；窗口内人工 P 或 STA/LTA 候选记命中、人工 S 不算（列入排除证据），其余记缺口；逐台站给可观测/命中/缺口数与缺口率，低于最低可观测事件数标证据不足（`gap_rate=null`，不参与排序评分）；逐事件返回预测、覆盖区间、全部匹配拾取或 `waveform_not_covered` 原因；冻结条目修订号与判定证据，按（编译， 容差， 阈值）幂等，并发折叠为一份，明细稳定游标分页，只读不改原数据
+- **台站波形采集连续性核对**：GET 提交台站码 + UTC 半开窗，跨**全部摄取批次**读取该站波形元数据；每段按起点与 `npts/采样率` 换算为半开区间并裁剪到请求窗；同站、起点、采样率、样本数、数据哈希全同的重复波形只计一次但保留全部 ingestion ID；扫描端点，计数 ≥1 覆盖、≥2 交叠，相接同类区间合并；返回覆盖段、首尾/内部/整窗空档与交叠段的起止/时长及来源 ingestion ID；交叠仅表示采集范围重合、不推断样本内容冲突；空/非法时间窗 422 拒绝，已知台站整窗无记录返回整窗空档，从未摄取的台站 404；纯只读、无状态、不依赖 run/目录，原摄取与拾取缺口报告不变
 - **明确拒绝**：缺采样率、坐标越界、数据不足、校准门槛不达标等均以结构化错误码拒绝
 
 ## 快速启动（Docker Compose）
@@ -56,6 +59,7 @@ docker compose up --build
 | `http://localhost:8000/v1/focal-mechanisms` | P 波初动震源机制反演 |
 | `http://localhost:8000/v1/location-uncertainties` | 事件定位不确定性评估（台站 bootstrap） |
 | `http://localhost:8000/v1/pick-gap-assessments` | 台站 P 波拾取缺口评估（目录编译批次） |
+| `http://localhost:8000/v1/stations/{station}/waveform-continuity` | 台站波形采集连续性核对（覆盖/空档/交叠） |
 
 ## 示例请求
 
@@ -720,6 +724,180 @@ curl -s "http://localhost:8000/v1/pick-gap-assessments/<assessment_id>/events?li
 - 评估不存在返回 `404 pick_gap_assessment_not_found`；列表按未知 `compilation_id` 过滤返回 `404 catalog_compilation_not_found`。
 - 评估创建后内容不可变；它**不修改任何 ingestions/runs/events/picks 与目录内容**，`process`、`replay`、目录编译/发布/撤回等既有接口语义保持原样。
 
+## 台站波形采集连续性核对（waveform continuity check）
+
+核对回答一个运维问题：“**某个台站在这段 UTC 时间里，平台实际采集到波形的范围是哪些？哪里断了、哪里被多个批次重复采集？**”。它是叠加在**全部摄取批次（ingestions）**之上的**纯只读、无状态**派生视图：不读 run/事件/拾取/目录、不写任何表，重复请求逐字节一致；原摄取与拾取缺口评估的请求、响应和报告均不受影响。
+
+### 区间换算、裁剪与去重
+
+- 客户端提交**台站码**与一个 **UTC 半开时间窗** `[start_time, end_time)`（ISO 8601，`Z` 表示 UTC）。
+- 服务扫描该站在**所有摄取批次**中的 Waveform 元数据，每段换算为半开覆盖区间 `[start, start + npts/采样率)`（ObsPy 约定：末样本时刻为 `start + (npts−1)/采样率`，其后再延一个采样间隔为半开右端），再与请求窗求交，裁剪为 `[max(start, w0), min(end, w1))`；只在单个端点相接（交集宽度为 0）的波形不计入。
+- 同站且**起点、采样率、样本数、数据 SHA-256 全同**的波形视为**同一段采集**（典型为同一窗口被重复摄取）：覆盖/交叠计数**只计一次**，但该段保留**全部来源 ingestion ID**；数据哈希不同（样本内容不同）即使范围相同也是不同段。
+
+### 端点扫描与分类
+
+- 将全部裁剪后区间的端点排序（同一样本时刻的端点按数值容差聚为一点），逐开区间统计落在其中的**去重后波形数**：`0` 为**空档**、`1` 为**覆盖**、`≥2` 为**交叠**；**相接的同类区间自动合并**（例如两段首尾相接的单覆盖波形合并为一条覆盖段，深度同为交叠的相邻子段合并为一条交叠段）。
+- 空档标注位置：`leading`（窗前缀）、`trailing`（窗后缀）、`internal`（内部空档）、`whole`（整窗空档——已知台站但窗内无任何记录）。
+- **交叠仅表示采集范围重合**（`overlap_semantics: "acquisition_range_only"`），服务不比较样本内容、不推断数据冲突；深度按**去重后唯一段**计数，重复摄取不会把深度抬高。
+
+### 请求与实际响应
+
+启动服务（Docker Compose 一键启动，见下）后：
+
+```bash
+curl -s -G "http://localhost:8000/v1/stations/CW01/waveform-continuity" \
+  --data-urlencode "start_time=2026-09-22T00:00:00Z" \
+  --data-urlencode "end_time=2026-09-22T00:01:00Z" | python -m json.tool
+```
+
+本例中台站 `CW01` 在四个摄取批次中出现：批次 A/B 携带**完全相同**的 `[00:00:00, 00:00:20)`（2000 点 @ 100 Hz、同一数据哈希，重复摄取，计一段但保留两个 ingestion ID）；批次 C 为与之**首尾相接**的 `[00:00:20, 00:00:40)`（合并成 30 s 覆盖段的一部分）；批次 D 数据不同、范围 `[00:00:30, 00:00:50)`，与 C 在 `[00:00:30, 00:00:40)` 交叠。以下是该请求的**实际响应**：
+
+```json
+{
+  "station": "CW01",
+  "window": {
+    "start": "2026-09-22T00:00:00.000Z",
+    "end": "2026-09-22T00:01:00.000Z",
+    "interval": "half_open"
+  },
+  "ingested_waveform_count": 4,
+  "unique_segment_count": 3,
+  "duplicate_waveform_count": 1,
+  "coverage": [
+    {
+      "start": "2026-09-22T00:00:00.000Z",
+      "end": "2026-09-22T00:00:30.000Z",
+      "duration_s": 30.0,
+      "coverage_count": 1,
+      "ingestion_ids": [
+        "54f77efa41644e09908354467b0e67e5",
+        "c5583cd29d3a4211873c4cf98d937182",
+        "ce80021f27ec4259bfa36dd5c82b7e93"
+      ]
+    },
+    {
+      "start": "2026-09-22T00:00:40.000Z",
+      "end": "2026-09-22T00:00:50.000Z",
+      "duration_s": 10.0,
+      "coverage_count": 1,
+      "ingestion_ids": ["18eba49351a64d8eac41fad1a7c11d5b"]
+    }
+  ],
+  "gaps": [
+    {
+      "start": "2026-09-22T00:00:50.000Z",
+      "end": "2026-09-22T00:01:00.000Z",
+      "duration_s": 10.0,
+      "gap_kind": "trailing"
+    }
+  ],
+  "overlaps": [
+    {
+      "start": "2026-09-22T00:00:30.000Z",
+      "end": "2026-09-22T00:00:40.000Z",
+      "duration_s": 10.0,
+      "coverage_count": 2,
+      "ingestion_ids": [
+        "18eba49351a64d8eac41fad1a7c11d5b",
+        "54f77efa41644e09908354467b0e67e5"
+      ]
+    }
+  ],
+  "duplicates": [
+    {
+      "start_time": "2026-09-22T00:00:00.000Z",
+      "sampling_rate": 100.0,
+      "npts": 2000,
+      "data_sha256": "ef3db59b37bade07bd95ebc915bd7a126d7da0cf7c06eac8c183642d0e47a41f",
+      "ingestion_ids": [
+        "c5583cd29d3a4211873c4cf98d937182",
+        "ce80021f27ec4259bfa36dd5c82b7e93"
+      ],
+      "ingestion_count": 2
+    }
+  ],
+  "totals": {
+    "covered_s": 40.0,
+    "gap_s": 10.0,
+    "overlap_s": 10.0,
+    "window_s": 60.0,
+    "covered_segment_count": 2,
+    "gap_count": 1,
+    "overlap_segment_count": 1
+  },
+  "overlap_semantics": "acquisition_range_only"
+}
+```
+
+要点：`[00:00:00, 00:00:30)` 覆盖段的 `ingestion_ids` 同时列出三个批次（A/B 重复 + C 相接合并），而 `coverage_count` 恒为 1；`duplicates` 单列重复采集证据（含数据哈希与全部 ingestion ID）；`overlaps` 的 `coverage_count=2` 是去重后唯一段数；`totals` 给覆盖/空档/交叠的时长与段数（`covered_s + gap_s + overlap_s` 的并集口径恰为窗长）。
+
+**已知台站、整窗无记录**（例如查询 `CW01` 在 00:10:00–00:11:00 的情况）返回 200 与一个整窗空档，不报错：
+
+```bash
+curl -s -G "http://localhost:8000/v1/stations/CW01/waveform-continuity" \
+  --data-urlencode "start_time=2026-09-22T00:10:00Z" \
+  --data-urlencode "end_time=2026-09-22T00:11:00Z" | python -m json.tool
+```
+
+```json
+{
+  "station": "CW01",
+  "window": {"start": "2026-09-22T00:10:00.000Z",
+             "end": "2026-09-22T00:11:00.000Z", "interval": "half_open"},
+  "ingested_waveform_count": 4,
+  "unique_segment_count": 0,
+  "duplicate_waveform_count": 0,
+  "coverage": [],
+  "gaps": [{
+    "start": "2026-09-22T00:10:00.000Z",
+    "end": "2026-09-22T00:11:00.000Z",
+    "duration_s": 60.0,
+    "gap_kind": "whole"
+  }],
+  "overlaps": [],
+  "duplicates": [],
+  "totals": {"covered_s": 0.0, "gap_s": 60.0, "overlap_s": 0.0, "window_s": 60.0,
+             "covered_segment_count": 0, "gap_count": 1, "overlap_segment_count": 0},
+  "overlap_semantics": "acquisition_range_only"
+}
+```
+
+**明确拒绝**：从未摄取过的台站返回 `404 station_not_found`；空/反向时间窗（`start_time ≥ end_time`）、缺失任一边界或时间戳不可解析均返回 `422 invalid_time_window`：
+
+```bash
+# 404：台站从未摄取
+curl -s -G "http://localhost:8000/v1/stations/ZZ99/waveform-continuity" \
+  --data-urlencode "start_time=2026-09-22T00:00:00Z" \
+  --data-urlencode "end_time=2026-09-22T00:01:00Z"
+# {"detail": {"code": "station_not_found",
+#             "message": "station ZZ99 has never been ingested (no waveform metadata)"}}
+
+# 422：空时间窗（start_time == end_time）
+curl -s -G "http://localhost:8000/v1/stations/CW01/waveform-continuity" \
+  --data-urlencode "start_time=2026-09-22T00:00:20Z" \
+  --data-urlencode "end_time=2026-09-22T00:00:20Z"
+# {"detail": {"code": "invalid_time_window",
+#             "message": "time window must be a non-empty half-open interval (start_time < end_time)"}}
+
+# 422：缺少 end_time
+curl -s -G "http://localhost:8000/v1/stations/CW01/waveform-continuity" \
+  --data-urlencode "start_time=2026-09-22T00:00:00Z"
+# {"detail": {"code": "invalid_time_window",
+#             "message": "missing required UTC window bound 'end_time'"}}
+```
+
+### 启动（Docker Compose 一键启动）
+
+连续性核对 API 随主服务一起发布，无需额外服务或存储：
+
+```bash
+docker compose up --build
+# GET http://localhost:8000/v1/stations/{station}/waveform-continuity
+# Swagger: http://localhost:8000/docs
+```
+
+核对只查询已持久化的 `waveforms` 元数据表（`db` 服务自动建表），不创建任何新表、不产生状态，因此升级后对历史摄取批次立即可用；删除/重建容器不影响计算口径，只要数据库中的摄取记录不变，结果即不变。
+
 ## 目录告警编排（catalog alert orchestration）
 
 告警是叠加在**已发布目录**之上的规则驱动层：管理员定义**不可变的告警规则版本**并以 CAS 发布；对任一**目录编译批次**做评估时，服务按规则对批次内**已发布条目**逐条匹配，为每个（规则， 条目）匹配生成**恰好一次**的确定性命中记录，并把连续命中按规则与合并间隔编排成告警事件。该层只读目录、只写自己的表：`process`/`replay`/`compare`、校准、目录与审计接口语义完全不变。
@@ -856,6 +1034,7 @@ curl -s "http://localhost:8000/v1/alerts/evaluations?compilation_id=<compilation
 | GET | `/v1/pick-gap-assessments` | 评估列表（可按 `compilation_id` 过滤，稳定游标分页） |
 | GET | `/v1/pick-gap-assessments/{assessment_id}` | 查询单个评估（冻结选取/版本快照与逐台站汇总） |
 | GET | `/v1/pick-gap-assessments/{assessment_id}/events` | 逐事件判定明细分页（稳定发震时刻/条目/台站顺序，可按 `status=observable\|unobservable` 过滤，游标分页） |
+| GET | `/v1/stations/{station}/waveform-continuity` | 台站波形采集连续性核对（跨全部摄取批次；半开 UTC 窗 `start_time`/`end_time`；去重重复波形、端点扫描，返回覆盖/首尾/内部/整窗空档/交叠及来源 ingestion ID；纯只读无状态） |
 | POST | `/v1/alert-rules` | 创建不可变告警规则版本（同 `(name, version)` 同内容幂等；内容不同 409） |
 | GET | `/v1/alert-rules`、`/v1/alert-rules/{rule_id}` | 列出（`name`/`status` 过滤 + 游标分页）/查看告警规则 |
 | POST | `/v1/alert-rules/{rule_id}/publish` | 发布草稿规则（`expected_revision` CAS，重复幂等） |
@@ -995,6 +1174,7 @@ curl -s "http://localhost:8000/v1/alerts/evaluations?compilation_id=<compilation
 - **目录告警编排幂等且只增不改**：规则版本内容自创建起不可变，仅生命周期迁移（草稿→发布→停用）更新 `revision`/时间戳；评估按规范请求哈希去重（唯一索引），重复请求即幂等重评估，只补录新匹配；命中以 `(rule_id, entry_id)` 唯一约束保证任何并发下不重复，序列化临界区（进程内锁 + PostgreSQL 咨询锁）保证评估/确认/解除/撤回联动互不交错、不漏报；告警确认/解除是幂等迁移，条目撤回只关闭未确认告警且不改写任何命中与审计链；告警层不写 ingestions/runs/events/picks 与目录内容，既有接口的请求、响应与幂等键均保持原样。
 - **定位不确定性评估幂等且只读**：评估按 `(event_id, run_id, n_resamples, alpha, seed)` 的规范哈希（`request_hash`）去重，重复/并发相同请求在唯一索引上折叠为同一 `assessment_id` 与报告；任一参数（含种子）不同即为不同评估。冻结的拾取（含权重）/模型/校准/参数随报告固化，重采样序列由种子完全确定（`numpy.random.default_rng(seed)` 逐次有放回抽取），逐样本结果一次性持久化且创建后不可变；可解样本不足 80% 的请求被 422 拒绝且不留任何状态（重复提交得到同一拒绝）。评估只写独立的评估/样本表，**不修改原事件、run、拾取或目录内容**，既有接口语义保持原样。
 - **台站 P 波拾取缺口评估幂等且只读**：评估按 `(compilation_id, arrival_tolerance_s, min_observable_events)` 的规范哈希（`request_hash`）去重，重复/并发相同请求在唯一索引上折叠为同一 `assessment_id` 与同一快照（首次 201，重复 200）；任一参数不同即为不同评估。条目集在提交时按 `status="published"` 快照选取，每条仅经主 event/run 计一次，条目修订号、主 run 的速度模型分层、校准版本（含逐站 P 偏移）与 ingestion 坐标随报告冻结；预测走时与定位/关联共用同一分层模型与高程改正，提交后条目再撤回不改变报告。逐事件证据（预测时刻、覆盖区间、命中/排除拾取、不可观测原因）一次性持久化并按（发震时刻， 条目 ID， 台站码）稳定排序分页。评估只写独立的评估/台站/事件表，**不修改任何 ingestions/runs/events/picks 与目录内容**，既有接口的请求、响应与幂等键均保持原样。
+- **台站波形采集连续性核对只读、无状态**：核对不创建、不修改任何表——每次请求都从全部摄取批次的 `waveforms` 元数据现算：每段换算为半开区间 `[start, start+npts/sr)` 并裁剪到请求窗；同站、起点、采样率、样本数与数据哈希全同的波形折叠为一个唯一段（保留全部 ingestion ID，重复明细单列），数据哈希不同即使范围相同也是不同段；端点扫描按唯一段深度分类（0 空档 / 1 覆盖 / ≥2 交叠）并合并相接同类区间，空档区分 `leading`/`trailing`/`internal`/`whole`。结果与 run、事件、拾取、目录状态及磁盘目录完全无关，重复请求逐字节一致；`overlap_semantics="acquisition_range_only"` 表明交叠仅表示采集范围重合、不推断样本内容冲突。**原摄取、拾取缺口报告及其它一切既有接口的请求、响应与幂等键均保持原样。**
 
 ## 错误码
 
@@ -1041,6 +1221,8 @@ curl -s "http://localhost:8000/v1/alerts/evaluations?compilation_id=<compilation
 | 422 | `insufficient_solvable_samples` | bootstrap 可解样本不足重采样次数的 80%（拒绝且不留状态） |
 | 404 | `pick_gap_assessment_not_found` | 台站 P 波拾取缺口评估不存在 |
 | 422 | `no_published_entries` | 提交评估时目标目录编译批次没有任何已发布条目（全为草稿或已撤回；拒绝且不留状态） |
+| 404 | `station_not_found` | 波形连续性核对：该台站从未摄取（无任何 Waveform 元数据） |
+| 422 | `invalid_time_window` | 波形连续性核对：UTC 半开时间窗为空/反向（`start_time ≥ end_time`）、边界缺失或不可解析 |
 
 未关联拾取原因：`isolated`（窗内无其他拾取）、`insufficient_stations`（台站数不足）、`location_failed`（定位不收敛/欠定）、`residual_exceeded`（残差超限）。
 
@@ -1053,7 +1235,7 @@ bootstrap 样本失败原因：`insufficient_stations`（本次抽样的独立�
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
-pytest tests/ -q                 # 191 个测试（走时/定位/关联/Huber/校准生命周期/校准幂等/跨运行目录聚类/生命周期/分页/台站影响审计 leave-one-out/幂等/分页/只读/目录告警编排规则生命周期/评估幂等/合并抑制升级/确认解除/撤回联动/并发/游标/P 波初动震源机制反演网格搜索/仅互换节面去重与保留滑动反向候选/旧报告幂等并发安全惰性修正/拒绝/分页/只读/定位不确定性台站 bootstrap/最近秩分位/协方差/可解率门槛/幂等/并发/游标/只读/台站 P 波拾取缺口评估已发布选取/主 run 预测/校准偏移/波形覆盖闸门/命中与缺口/人工 S 排除/证据不足/冻结修订号/幂等/并发/分页/只读，端到端 API，SQLite）
+pytest tests/ -q                 # 208 个测试（走时/定位/关联/Huber/校准生命周期/校准幂等/跨运行目录聚类/生命周期/分页/台站影响审计 leave-one-out/幂等/分页/只读/目录告警编排规则生命周期/评估幂等/合并抑制升级/确认解除/撤回联动/并发/游标/P 波初动震源机制反演网格搜索/仅互换节面去重与保留滑动反向候选/旧报告幂等并发安全惰性修正/拒绝/分页/只读/定位不确定性台站 bootstrap/最近秩分位/协方差/可解率门槛/幂等/并发/游标/只读/台站 P 波拾取缺口评估已发布选取/主 run 预测/校准偏移/波形覆盖闸门/命中与缺口/人工 S 排除/证据不足/冻结修订号/幂等/并发/分页/只读/台站波形采集连续性核对半开区间裁剪/重复波形去重保留 ingestion ID/端点扫描覆盖交叠/相接合并/首尾内部整窗空档/非法窗 422/未知台站 404/跨批次只读一致，端到端 API，SQLite）
 DATABASE_URL=sqlite:////tmp/dev.db uvicorn app.main:app --reload   # 无 PostgreSQL 时本地调试
 ```
 
@@ -1090,7 +1272,11 @@ app/
     pick_gap.py         # 台站 P 波拾取缺口评估：仅取提交时已发布条目（主 event/run 每条一次）、
                         # 走时+校准偏移预测、波形覆盖闸门、人工P/STA-LTA 命中（人工 S 排除）、
                         # 缺口率与证据不足、冻结修订号与判定证据、幂等保存与游标分页
+    waveform_continuity.py # 台站波形采集连续性核对：跨全部摄取批次读取波形元数据、半开区间
+                        # (start, start+npts/sr) 裁剪、(起点/采样率/npts/数据哈希) 去重保留全部
+                        # ingestion ID、端点扫描计数（≥1 覆盖、≥2 交叠）并合并相接同类区间、
+                        # 首尾/内部/整窗空档、覆盖/交叠附来源 ingestion ID；纯只读、无状态
     pipeline.py         # 摄取/关联/重放/校准创建与原子激活/比较编排与持久化
 scripts/make_example.py # 生成合成示例请求
-tests/                  # pytest（单元 + 端到端，191 个测试，SQLite）
+tests/                  # pytest（单元 + 端到端，208 个测试，SQLite）
 ```
