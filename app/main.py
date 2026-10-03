@@ -26,7 +26,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Seismic Network Phase Association API",
-    version="1.8.0",
+    version="1.9.0",
     description=(
         "Upload miniSEED waveform windows, generate STA/LTA candidate picks, "
         "associate them into events and locate them with weighted least squares "
@@ -60,7 +60,15 @@ app = FastAPI(
         "cover the predicted instant +/- tolerance, then marks manual-P or "
         "STA/LTA matches as hits (manual S never matches) and the rest as "
         "gaps, reporting per-station observable/gap counts and gap rates "
-        "(with evidence-insufficient flags) plus paginated per-event evidence."
+        "(with evidence-insufficient flags) plus paginated per-event evidence. "
+        "A station waveform acquisition continuity check takes a station code "
+        "and a UTC half-open window, converts every ingested waveform segment "
+        "of that station (across all ingestion batches) into a half-open "
+        "coverage interval clipped to the window, counts identical duplicates "
+        "once while keeping all ingestion ids, and reports merged covered "
+        "intervals, leading/internal/trailing gaps and overlap segments "
+        "(acquisition-range coincidence only, no sample-content inference) "
+        "with their source ingestion ids."
     ),
     lifespan=lifespan,
 )
@@ -97,7 +105,7 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
 def root():
     return {
         "service": "seismic-network-association",
-        "version": "1.8.0",
+        "version": "1.9.0",
         "docs": "/docs",
         "health": "/health",
     }

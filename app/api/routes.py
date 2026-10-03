@@ -34,6 +34,7 @@ from ..services import (
     pick_gap,
     pipeline,
     station_audit,
+    waveform_continuity,
 )
 from ..services.pipeline import ApiError
 
@@ -504,3 +505,23 @@ def list_pick_gap_events(
 ):
     """Paginate the per-entry/per-station decision evidence in stable order."""
     return pick_gap.list_events(db, assessment_id, status, limit, cursor)
+
+
+# --------------------------------------------------------------------------- #
+# station waveform acquisition continuity check
+# --------------------------------------------------------------------------- #
+@router.get("/v1/waveform-continuity")
+def get_waveform_continuity(
+    station: str = Query(..., min_length=1, max_length=32),
+    start_time: datetime = Query(..., description="UTC window start (inclusive)"),
+    end_time: datetime = Query(..., description="UTC window end (exclusive)"),
+    db: Session = Depends(get_db),
+):
+    """Audit one station's acquisition continuity over a UTC half-open window.
+
+    Read-only and stateless: the report depends only on the ingested waveform
+    metadata (across all ingestion batches), never on runs or catalog state.
+    Overlap segments mean acquisition ranges coincide; they do not infer any
+    sample-content conflict.
+    """
+    return waveform_continuity.check_continuity(db, station, start_time, end_time)
